@@ -1,0 +1,36 @@
+name: 'Astro PR Review Bot'
+description: 'AI-powered PR review using Claude with project-specific conventions'
+author: 'astronautsid'
+
+inputs:
+  anthropic_api_key:
+    description: 'Anthropic API key'
+    required: true
+  model:
+    description: 'Claude model to use'
+    required: false
+    default: 'claude-sonnet-4-6'
+  max_files:
+    description: 'Maximum number of files to review (skip huge PRs)'
+    required: false
+    default: '20'
+  ignore_paths:
+    description: 'Glob patterns to ignore, comma-separated'
+    required: false
+    default: ''
+  review_style:
+    description: 'Review output style: inline, summary, or checklist'
+    required: false
+    default: 'inline'
+  extra_context:
+    description: 'Additional review rules or context'
+    required: false
+    default: ''
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'eye'
+  color: 'blue'
