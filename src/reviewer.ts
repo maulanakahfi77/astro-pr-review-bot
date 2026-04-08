@@ -25,7 +25,7 @@ export async function getReview(
 
   const response = await client.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [
       {
         role: 'user',
@@ -40,6 +40,7 @@ export async function getReview(
   }
 
   const text = content.text.trim()
+  core.info(`Claude response length: ${text.length} chars, stop_reason: ${response.stop_reason}`)
 
   // Extract JSON from response (handle possible markdown code blocks)
   let jsonStr = text
@@ -48,11 +49,20 @@ export async function getReview(
     jsonStr = jsonMatch[1].trim()
   }
 
-  const comments: ReviewComment[] = JSON.parse(jsonStr)
-
-  // Add severity emoji to comment bodies
-  return comments.map(c => ({
-    ...c,
-    body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
-  }))
+  try {
+    const comments: ReviewComment[] = JSON.parse(jsonStr)
+    return comments.map(c => ({
+      ...c,
+      body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
+    }))
+  } catch (parseError) {
+    // If JSON is truncated/invalid, post the raw response as a single comment
+    core.warning(`Failed to parse Claude response as JSON: ${parseError}`)
+    return [{
+      path: 'SUMMARY',
+      line: 0,
+      severity: 'info',
+      body: text,
+    }]
+  }
 }
