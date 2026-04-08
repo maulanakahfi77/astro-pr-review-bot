@@ -56,8 +56,12 @@ export async function getPRContext(): Promise<PRContext> {
 
   const changedFiles: FileChange[] = []
 
+  // Always skip test files by default
+  const defaultIgnore = ['_test\\.go$', '_mock_test\\.go$']
+  const allIgnore = [...defaultIgnore, ...ignorePaths]
+
   for (const file of files.slice(0, maxFiles)) {
-    if (shouldIgnore(file.filename, ignorePaths)) continue
+    if (shouldIgnore(file.filename, allIgnore)) continue
 
     let content = ''
     try {

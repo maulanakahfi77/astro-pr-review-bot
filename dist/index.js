@@ -29290,8 +29290,11 @@ async function getPRContext() {
     const ignorePathsInput = core.getInput('ignore_paths');
     const ignorePaths = ignorePathsInput ? ignorePathsInput.split(',').map(p => p.trim()) : [];
     const changedFiles = [];
+    // Always skip test files by default
+    const defaultIgnore = ['_test\\.go$', '_mock_test\\.go$'];
+    const allIgnore = [...defaultIgnore, ...ignorePaths];
     for (const file of files.slice(0, maxFiles)) {
-        if (shouldIgnore(file.filename, ignorePaths))
+        if (shouldIgnore(file.filename, allIgnore))
             continue;
         let content = '';
         try {
@@ -29608,10 +29611,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.buildReviewPrompt = buildReviewPrompt;
 function buildReviewPrompt(context, extraContext) {
     const memoriesSection = context.serenaMemories.length > 0
-        ? `\n## Domain Memories (from Serena)\n${context.serenaMemories.join('\n\n')}`
+        ? `\n## Domain Memories\n${context.serenaMemories.join('\n\n')}`
         : '';
     const agenticSection = context.agenticMaterial
-        ? `\n## Specs & Plan for this ticket\n${context.agenticMaterial}`
+        ? `\n## Specs & Plan\n${context.agenticMaterial}`
         : '';
     const filesSection = context.changedFiles.map(f => {
         return `### ${f.filename} (${f.status})
@@ -29620,53 +29623,42 @@ ${f.patch}
 \`\`\``;
     }).join('\n\n');
     const extraSection = extraContext
-        ? `\n## Additional Review Rules\n${extraContext}`
+        ? `\n## Additional Rules\n${extraContext}`
         : '';
-    return `You are a senior code reviewer for a Go gRPC microservice team at Astronauts.
+    return `You are a senior code reviewer for a Go gRPC microservice team.
 
-## Your Role
-Review this pull request against the project's conventions and standards. Be direct and actionable.
-Focus on issues that would cause bugs, 500 errors, or convention violations.
-Do NOT comment on style preferences, minor formatting, or things that are correct.
+## Rules
+- Be concise and direct. One sentence per finding.
+- Only report errors, warnings, and a short checklist. No info-level comments.
+- Do NOT explain what the code does. Only flag what's wrong.
+- Do NOT comment on test files, style, formatting, or things that are correct.
 
-## Project Conventions (from CLAUDE.md)
-${context.claudeMd || 'No CLAUDE.md found — review using general Go best practices.'}
+## Project Conventions
+${context.claudeMd || 'No CLAUDE.md found — use general Go best practices.'}
 ${memoriesSection}
 ${agenticSection}
 ${extraSection}
 
-## Critical Checks (project-specific)
-1. **ErrList mapping**: If a new error is created in constants/error.go, it MUST be added to the relevant ErrList (e.g., ErrListReplenishment, ErrListPackageID). Missing mapping = 500 Internal Server Error instead of proper gRPC status code.
-2. **Feature flags**: New behavior changes MUST be gated behind a config-based feature flag (ffRelease* or ffEnable* in FeatureFlagConfig). Check that:
-   - Bool field added to FeatureFlagConfig in internal/configs/types.go
-   - YAML key added to internal/configs/config.yaml.example
-   - Flag checked in service or repository layer
-3. **Tracer spans**: Every public service/repository method must have tracer.StartSpanWithContext
-4. **Test coverage**: New logic paths should have corresponding test cases. Feature flags need both flag-on and flag-off tests.
-5. **Error handling**: Errors from external services should be logged but not necessarily returned as-is. Check if errors need wrapping or mapping.
-6. **Commit message format**: Should follow [WF-xxxx] prefix pattern
+## Critical Checks
+1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList. Missing = 500 instead of proper gRPC status.
+2. **Feature flags**: Behavior changes MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example).
+3. **Tracer spans**: Public service/repository methods must have tracer.StartSpanWithContext.
+4. **Error handling**: Errors from external services should be logged, not silently swallowed.
+5. **Commit format**: [WF-xxxx] prefix.
 
 ## Changed Files
 ${filesSection}
 
-## Instructions
-Respond with a JSON array of review comments. Each comment should have:
-- "path": the file path
-- "line": the line number in the NEW file (from the diff, use the + side line numbers)
-- "severity": "error" | "warning" | "info"
-- "body": the review comment in markdown
+## Output Format
+Respond ONLY with a valid JSON array. No markdown, no explanation, no code blocks.
 
-If the line number is not determinable, use line 1.
+Each item:
+{"path": "file/path.go", "line": 42, "severity": "error"|"warning", "body": "one-line finding"}
 
-Also include a final summary object with:
-- "path": "SUMMARY"
-- "line": 0
-- "severity": "info"
-- "body": overall PR assessment with a checklist of convention compliance
+Last item must be a summary:
+{"path": "SUMMARY", "line": 0, "severity": "info", "body": "### Critical\\n- 🔴 ...\\n\\n### Warnings\\n- 🟡 ...\\n\\n### Checklist\\n- ✅/❌ ErrList, Feature flag, Tracer, Tests"}
 
-Only include comments that are actionable. If the PR looks good, say so briefly.
-
-Respond ONLY with valid JSON array, no other text.`;
+Keep the summary under 20 lines. Only include findings that are actionable.`;
 }
 
 
