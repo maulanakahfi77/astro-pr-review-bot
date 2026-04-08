@@ -29547,14 +29547,31 @@ const context_1 = __nccwpck_require__(788);
 const prompt_1 = __nccwpck_require__(705);
 const reviewer_1 = __nccwpck_require__(532);
 const github_1 = __nccwpck_require__(9248);
+async function editTriggerComment(body) {
+    const commentId = github.context.payload.comment?.id;
+    if (!commentId)
+        return;
+    const token = process.env.GITHUB_TOKEN || '';
+    const octokit = github.getOctokit(token);
+    const { owner, repo } = github.context.repo;
+    await octokit.rest.issues.updateComment({
+        owner,
+        repo,
+        comment_id: commentId,
+        body,
+    });
+}
 async function run() {
     try {
         const apiKey = core.getInput('anthropic_api_key', { required: true });
         const model = core.getInput('model') || 'claude-sonnet-4-6';
         const extraContext = core.getInput('extra_context') || '';
+        // Edit the /review comment to show progress
+        await editTriggerComment('🤖 **Reviewing PR...** ⏳');
         core.info('Fetching PR context...');
         const prContext = await (0, context_1.getPRContext)();
         if (prContext.changedFiles.length === 0) {
+            await editTriggerComment('🤖 **No files to review.**');
             core.info('No files to review');
             return;
         }
@@ -29581,6 +29598,11 @@ async function run() {
         core.setOutput('error_count', errorCount);
         core.setOutput('warning_count', warningCount);
         core.setOutput('comment_count', comments.length);
+        // Edit the /review comment to show completion
+        const status = errorCount > 0
+            ? `🤖 **Review complete** — ${errorCount} error(s), ${warningCount} warning(s)`
+            : `🤖 **Review complete** — ${warningCount} warning(s), no errors ✅`;
+        await editTriggerComment(status);
         if (errorCount > 0) {
             core.warning(`Review found ${errorCount} error(s) and ${warningCount} warning(s)`);
         }
@@ -29589,12 +29611,9 @@ async function run() {
         }
     }
     catch (error) {
-        if (error instanceof Error) {
-            core.setFailed(error.message);
-        }
-        else {
-            core.setFailed('An unexpected error occurred');
-        }
+        const msg = error instanceof Error ? error.message : 'An unexpected error occurred';
+        await editTriggerComment(`🤖 **Review failed** — ${msg}`).catch(() => { });
+        core.setFailed(msg);
     }
 }
 run();
