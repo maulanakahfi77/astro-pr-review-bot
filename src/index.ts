@@ -26,7 +26,18 @@ async function run(): Promise<void> {
 
     core.info(`Got ${comments.length} comments from Claude`)
 
-    const commitSha = github.context.payload.pull_request?.head.sha || ''
+    // Get commit SHA - for issue_comment, fetch from PR API
+    let commitSha = github.context.payload.pull_request?.head.sha || ''
+    if (!commitSha) {
+      const token = process.env.GITHUB_TOKEN || ''
+      const octokit = github.getOctokit(token)
+      const { data: pr } = await octokit.rest.pulls.get({
+        owner: prContext.owner,
+        repo: prContext.repo,
+        pull_number: prContext.prNumber,
+      })
+      commitSha = pr.head.sha
+    }
     await postReview(
       prContext.owner,
       prContext.repo,

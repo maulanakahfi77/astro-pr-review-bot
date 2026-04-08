@@ -29268,9 +29268,10 @@ async function getPRContext() {
     const context = github.context;
     const owner = context.repo.owner;
     const repo = context.repo.repo;
-    const prNumber = context.payload.pull_request?.number;
+    // Support both pull_request and issue_comment triggers
+    const prNumber = context.payload.pull_request?.number || context.payload.issue?.number;
     if (!prNumber) {
-        throw new Error('This action can only be run on pull_request events');
+        throw new Error('This action can only be run on pull_request or issue_comment events');
     }
     // Get PR diff
     const { data: diff } = await octokit.rest.pulls.get({
@@ -29558,7 +29559,18 @@ async function run() {
         const prompt = (0, prompt_1.buildReviewPrompt)(prContext, extraContext);
         const comments = await (0, reviewer_1.getReview)(apiKey, model, prompt);
         core.info(`Got ${comments.length} comments from Claude`);
-        const commitSha = github.context.payload.pull_request?.head.sha || '';
+        // Get commit SHA - for issue_comment, fetch from PR API
+        let commitSha = github.context.payload.pull_request?.head.sha || '';
+        if (!commitSha) {
+            const token = process.env.GITHUB_TOKEN || '';
+            const octokit = github.getOctokit(token);
+            const { data: pr } = await octokit.rest.pulls.get({
+                owner: prContext.owner,
+                repo: prContext.repo,
+                pull_number: prContext.prNumber,
+            });
+            commitSha = pr.head.sha;
+        }
         await (0, github_1.postReview)(prContext.owner, prContext.repo, prContext.prNumber, comments, commitSha);
         // Set outputs
         const errorCount = comments.filter(c => c.severity === 'error').length;
