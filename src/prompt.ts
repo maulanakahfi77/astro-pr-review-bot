@@ -27,6 +27,7 @@ ${f.patch}
 - Only report errors, warnings, and a short checklist. No info-level comments.
 - Do NOT explain what the code does. Only flag what's wrong.
 - Do NOT comment on test files, style, formatting, or things that are correct.
+- Do NOT flag missing total_pages or total_data in pagination responses — this is intentionally omitted for scalability.
 
 ## Project Conventions
 ${context.claudeMd || 'No CLAUDE.md found — use general Go best practices.'}
