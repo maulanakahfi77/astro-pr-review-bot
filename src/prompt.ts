@@ -35,7 +35,7 @@ ${agenticSection}
 ${extraSection}
 
 ## Critical Checks
-1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList. Missing = 500 instead of proper gRPC status.
+1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList ONLY if they are returned as gRPC errors (via `return err`). Errors that are only used as string messages for CSV/bulk upload responses (e.g., written to CSV error columns) do NOT need ErrList mapping. Check how the error is used before flagging.
 2. **Feature flags**: Behavior changes MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example).
 3. **Tracer spans**: Public service/repository methods must have tracer.StartSpanWithContext.
 4. **Error handling**: Errors from external services should be logged, not silently swallowed.
