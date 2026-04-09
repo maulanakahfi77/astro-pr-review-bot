@@ -49,7 +49,7 @@ async function getReview(apiKey, model, prompt) {
     core.info(`Calling Claude (${model})...`);
     const response = await client.messages.create({
         model,
-        max_tokens: 4096,
+        max_tokens: 8192,
         messages: [
             {
                 role: 'user',
@@ -62,17 +62,29 @@ async function getReview(apiKey, model, prompt) {
         throw new Error('Unexpected response type from Claude');
     }
     const text = content.text.trim();
+    core.info(`Claude response length: ${text.length} chars, stop_reason: ${response.stop_reason}`);
     // Extract JSON from response (handle possible markdown code blocks)
     let jsonStr = text;
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
         jsonStr = jsonMatch[1].trim();
     }
-    const comments = JSON.parse(jsonStr);
-    // Add severity emoji to comment bodies
-    return comments.map(c => ({
-        ...c,
-        body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
-    }));
+    try {
+        const comments = JSON.parse(jsonStr);
+        return comments.map(c => ({
+            ...c,
+            body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
+        }));
+    }
+    catch (parseError) {
+        // If JSON is truncated/invalid, post the raw response as a single comment
+        core.warning(`Failed to parse Claude response as JSON: ${parseError}`);
+        return [{
+                path: 'SUMMARY',
+                line: 0,
+                severity: 'info',
+                body: text,
+            }];
+    }
 }
 //# sourceMappingURL=reviewer.js.map

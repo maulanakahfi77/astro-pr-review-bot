@@ -1,4 +1,4 @@
-require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
+/******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
 /***/ 4914:
@@ -29457,12 +29457,7 @@ async function postReview(owner, repo, prNumber, comments, commitSha) {
     // Determine review event based on severity
     const hasErrors = comments.some(c => c.severity === 'error');
     const event = hasErrors ? 'REQUEST_CHANGES' : 'COMMENT';
-    // Build review body
-    let reviewBody = '## 🤖 AI Review\n\n';
-    if (summary) {
-        reviewBody += summary.body.replace(/^.*?(ERROR|WARNING|INFO):\s*/i, '');
-    }
-    // Build inline review comments
+    // Build inline review comments only (summary goes in edited /review comment)
     const reviewComments = inlineComments
         .filter(c => c.line > 0 && c.path)
         .map(c => ({
@@ -29470,6 +29465,10 @@ async function postReview(owner, repo, prNumber, comments, commitSha) {
         line: c.line,
         body: c.body,
     }));
+    if (reviewComments.length === 0) {
+        core.info('No inline comments to post');
+        return;
+    }
     try {
         await octokit.rest.pulls.createReview({
             owner,
@@ -29477,25 +29476,13 @@ async function postReview(owner, repo, prNumber, comments, commitSha) {
             pull_number: prNumber,
             commit_id: commitSha,
             event: event,
-            body: reviewBody,
+            body: '',
             comments: reviewComments,
         });
-        core.info(`Posted review with ${reviewComments.length} inline comments (${event})`);
+        core.info(`Posted ${reviewComments.length} inline comments (${event})`);
     }
     catch (error) {
-        // If inline comments fail (e.g., line numbers off), fall back to single comment
-        core.warning(`Failed to post inline review, falling back to comment: ${error}`);
-        let fallbackBody = reviewBody + '\n\n---\n\n';
-        for (const c of inlineComments) {
-            fallbackBody += `**${c.path}:${c.line}**\n${c.body}\n\n`;
-        }
-        await octokit.rest.issues.createComment({
-            owner,
-            repo,
-            issue_number: prNumber,
-            body: fallbackBody,
-        });
-        core.info('Posted fallback comment');
+        core.warning(`Failed to post inline review: ${error}`);
     }
 }
 
@@ -29598,11 +29585,15 @@ async function run() {
         core.setOutput('error_count', errorCount);
         core.setOutput('warning_count', warningCount);
         core.setOutput('comment_count', comments.length);
-        // Edit the /review comment to show completion
-        const status = errorCount > 0
+        // Edit the /review comment to show full summary
+        const summary = comments.find(c => c.path === 'SUMMARY');
+        const summaryBody = summary
+            ? summary.body.replace(/^.*?(ERROR|WARNING|INFO):\s*/i, '')
+            : '';
+        const header = errorCount > 0
             ? `🤖 **Review complete** — ${errorCount} error(s), ${warningCount} warning(s)`
             : `🤖 **Review complete** — ${warningCount} warning(s), no errors ✅`;
-        await editTriggerComment(status);
+        await editTriggerComment(`${header}\n\n${summaryBody}`);
         if (errorCount > 0) {
             core.warning(`Review found ${errorCount} error(s) and ${warningCount} warning(s)`);
         }
@@ -37979,4 +37970,3 @@ module.exports = parseParams
 /******/ 	
 /******/ })()
 ;
-//# sourceMappingURL=index.js.map

@@ -47,9 +47,10 @@ async function getPRContext() {
     const context = github.context;
     const owner = context.repo.owner;
     const repo = context.repo.repo;
-    const prNumber = context.payload.pull_request?.number;
+    // Support both pull_request and issue_comment triggers
+    const prNumber = context.payload.pull_request?.number || context.payload.issue?.number;
     if (!prNumber) {
-        throw new Error('This action can only be run on pull_request events');
+        throw new Error('This action can only be run on pull_request or issue_comment events');
     }
     // Get PR diff
     const { data: diff } = await octokit.rest.pulls.get({
@@ -68,8 +69,11 @@ async function getPRContext() {
     const ignorePathsInput = core.getInput('ignore_paths');
     const ignorePaths = ignorePathsInput ? ignorePathsInput.split(',').map(p => p.trim()) : [];
     const changedFiles = [];
+    // Always skip test files by default
+    const defaultIgnore = ['_test\\.go$', '_mock_test\\.go$'];
+    const allIgnore = [...defaultIgnore, ...ignorePaths];
     for (const file of files.slice(0, maxFiles)) {
-        if (shouldIgnore(file.filename, ignorePaths))
+        if (shouldIgnore(file.filename, allIgnore))
             continue;
         let content = '';
         try {

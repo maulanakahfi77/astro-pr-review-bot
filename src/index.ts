@@ -73,11 +73,17 @@ async function run(): Promise<void> {
     core.setOutput('warning_count', warningCount)
     core.setOutput('comment_count', comments.length)
 
-    // Edit the /review comment to show completion
-    const status = errorCount > 0
+    // Edit the /review comment to show full summary
+    const summary = comments.find(c => c.path === 'SUMMARY')
+    const summaryBody = summary
+      ? summary.body.replace(/^.*?(ERROR|WARNING|INFO):\s*/i, '')
+      : ''
+
+    const header = errorCount > 0
       ? `🤖 **Review complete** — ${errorCount} error(s), ${warningCount} warning(s)`
       : `🤖 **Review complete** — ${warningCount} warning(s), no errors ✅`
-    await editTriggerComment(status)
+
+    await editTriggerComment(`${header}\n\n${summaryBody}`)
 
     if (errorCount > 0) {
       core.warning(`Review found ${errorCount} error(s) and ${warningCount} warning(s)`)
