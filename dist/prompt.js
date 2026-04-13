@@ -53,7 +53,7 @@ These are real patterns flagged by senior reviewers on this codebase. Apply them
 ### Service layer
 - Publish messages to external systems (ERP, pubsub) AFTER db transaction commit, not before. If tx fails after publish, the message is already sent and cannot be rolled back.
 - Wrap context with "context.WithoutCancel()" for async operations (notifications, pubsub) to prevent cancellation from caller context.
-- For rollback in defer: check "err != nil" before rolling back, and use a separate error variable for the rollback error to avoid overwriting the original error.
+- Rollback in defer: "defer func() { _ = tx.Rollback() }()" is the CORRECT pattern in this codebase — DO NOT flag this as an issue. After a successful Commit(), Rollback() returns sql.ErrTxDone which is a harmless no-op. Adding "if err != nil" before rollback would actually be WRONG because it prevents rollback from running on panic. The error from Rollback() is intentionally discarded with "_ =". This is the established convention — confirmed by senior engineers (Minli, mtfiqh).
 
 ### Model/DAO layer
 - Nullable database fields should use "sql.Null***" types or pointer types (e.g. "*time.Time"), not zero values.
