@@ -5,3 +5,4 @@ export interface ReviewComment {
     body: string;
 }
 export declare function getReview(apiKey: string, model: string, prompt: string): Promise<ReviewComment[]>;
+//# sourceMappingURL=reviewer.d.ts.map

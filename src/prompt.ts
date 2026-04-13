@@ -81,8 +81,11 @@ Respond ONLY with a valid JSON array. No markdown, no explanation, no code block
 Each item:
 {"path": "file/path.go", "line": 42, "severity": "error"|"warning", "body": "one-line finding"}
 
+**IMPORTANT — Inline comment rule:**
+Only post inline comments on lines that appear in the diff (lines prefixed with \`+\` or \`-\` in the patch). If you find an issue in code that is NOT part of the diff (unchanged code in the file), put it in the SUMMARY instead with the file path and line number mentioned in the body. Do NOT post inline comments on unchanged lines — GitHub shows confusing context when comments don't match the visible diff hunk.
+
 Last item must be a summary:
-{"path": "SUMMARY", "line": 0, "severity": "info", "body": "### Critical\\n- 🔴 ...\\n\\n### Warnings\\n- 🟡 ...\\n\\n### Checklist\\n- ✅/❌ ErrList, Feature flag, Tracer, Tests"}
+{"path": "SUMMARY", "line": 0, "severity": "info", "body": "### Critical\\n- 🔴 ...\\n\\n### Warnings\\n- 🟡 ...\\n\\n### Out-of-diff findings\\n- path/to/file.go:42 — ...\\n\\n### Checklist\\n- ✅/❌ ErrList, Feature flag, Tracer, Tests"}
 
 Keep the summary under 20 lines. Only include findings that are actionable.`
 }

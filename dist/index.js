@@ -1,4 +1,4 @@
-/******/ (() => { // webpackBootstrap
+require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
 /***/ 4914:
@@ -29215,593 +29215,6 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
-/***/ 788:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getPRContext = getPRContext;
-const github = __importStar(__nccwpck_require__(3228));
-const core = __importStar(__nccwpck_require__(7484));
-const path_1 = __importDefault(__nccwpck_require__(6928));
-const fs_1 = __importDefault(__nccwpck_require__(9896));
-async function getPRContext() {
-    const token = process.env.GITHUB_TOKEN || '';
-    const octokit = github.getOctokit(token);
-    const context = github.context;
-    const owner = context.repo.owner;
-    const repo = context.repo.repo;
-    // Support both pull_request and issue_comment triggers
-    const prNumber = context.payload.pull_request?.number || context.payload.issue?.number;
-    if (!prNumber) {
-        throw new Error('This action can only be run on pull_request or issue_comment events');
-    }
-    // Get PR diff
-    const { data: diff } = await octokit.rest.pulls.get({
-        owner,
-        repo,
-        pull_number: prNumber,
-        mediaType: { format: 'diff' },
-    });
-    // Get changed files with content
-    const { data: files } = await octokit.rest.pulls.listFiles({
-        owner,
-        repo,
-        pull_number: prNumber,
-    });
-    const maxFiles = parseInt(core.getInput('max_files') || '20');
-    const ignorePathsInput = core.getInput('ignore_paths');
-    const ignorePaths = ignorePathsInput ? ignorePathsInput.split(',').map(p => p.trim()) : [];
-    const changedFiles = [];
-    // Always skip test files by default
-    const defaultIgnore = ['_test\\.go$', '_mock_test\\.go$'];
-    const allIgnore = [...defaultIgnore, ...ignorePaths];
-    for (const file of files.slice(0, maxFiles)) {
-        if (shouldIgnore(file.filename, allIgnore))
-            continue;
-        let content = '';
-        try {
-            const { data } = await octokit.rest.repos.getContent({
-                owner,
-                repo,
-                path: file.filename,
-                ref: context.payload.pull_request?.head.sha,
-            });
-            if ('content' in data && data.content) {
-                content = Buffer.from(data.content, 'base64').toString('utf-8');
-            }
-        }
-        catch {
-            // File might be deleted
-        }
-        changedFiles.push({
-            filename: file.filename,
-            status: file.status,
-            patch: file.patch || '',
-            content,
-        });
-    }
-    // Read CLAUDE.md from repo
-    const claudeMd = readFileIfExists('CLAUDE.md');
-    // Read Serena memories for affected domains
-    const serenaMemories = readSerenaMemories(changedFiles);
-    // Read agenticmaterial if WF ticket is referenced
-    const agenticMaterial = readAgenticMaterial(context.payload.pull_request?.title || '');
-    return {
-        owner,
-        repo,
-        prNumber,
-        diff: diff,
-        changedFiles,
-        claudeMd,
-        serenaMemories,
-        agenticMaterial,
-    };
-}
-function shouldIgnore(filename, patterns) {
-    return patterns.some(pattern => {
-        const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-        return regex.test(filename);
-    });
-}
-function readFileIfExists(filePath) {
-    const workspace = process.env.GITHUB_WORKSPACE || '.';
-    const fullPath = path_1.default.join(workspace, filePath);
-    try {
-        return fs_1.default.readFileSync(fullPath, 'utf-8');
-    }
-    catch {
-        return '';
-    }
-}
-function readSerenaMemories(changedFiles) {
-    const workspace = process.env.GITHUB_WORKSPACE || '.';
-    const memoriesDir = path_1.default.join(workspace, '.serena', 'memories');
-    const memories = [];
-    if (!fs_1.default.existsSync(memoriesDir))
-        return memories;
-    // Extract domains from changed file paths
-    const domains = new Set();
-    for (const file of changedFiles) {
-        // e.g., internal/service/packageid/get_list.go → packageid
-        const parts = file.filename.split('/');
-        const domainIdx = parts.findIndex(p => ['service', 'repository', 'api'].includes(p));
-        if (domainIdx >= 0 && parts[domainIdx + 1]) {
-            domains.add(parts[domainIdx + 1]);
-        }
-    }
-    // Read memory files matching affected domains
-    for (const domain of domains) {
-        const memoryFiles = fs_1.default.readdirSync(memoriesDir).filter(f => f.startsWith(domain));
-        for (const file of memoryFiles) {
-            try {
-                const content = fs_1.default.readFileSync(path_1.default.join(memoriesDir, file), 'utf-8');
-                memories.push(`# Memory: ${file}\n${content}`);
-            }
-            catch {
-                // skip
-            }
-        }
-    }
-    return memories;
-}
-function readAgenticMaterial(prTitle) {
-    const workspace = process.env.GITHUB_WORKSPACE || '.';
-    const match = prTitle.match(/WF-(\d+)/);
-    if (!match)
-        return '';
-    const wfDir = path_1.default.join(workspace, 'agenticmaterial', `WF-${match[1]}`);
-    if (!fs_1.default.existsSync(wfDir))
-        return '';
-    let material = '';
-    for (const file of ['specs.md', 'plan.md']) {
-        const filePath = path_1.default.join(wfDir, file);
-        try {
-            material += `\n# ${file}\n${fs_1.default.readFileSync(filePath, 'utf-8')}`;
-        }
-        catch {
-            // skip
-        }
-    }
-    return material;
-}
-
-
-/***/ }),
-
-/***/ 9248:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.postReview = postReview;
-const github = __importStar(__nccwpck_require__(3228));
-const core = __importStar(__nccwpck_require__(7484));
-async function postReview(owner, repo, prNumber, comments, commitSha) {
-    const token = process.env.GITHUB_TOKEN || '';
-    const octokit = github.getOctokit(token);
-    // Separate summary from inline comments
-    const summary = comments.find(c => c.path === 'SUMMARY');
-    const inlineComments = comments.filter(c => c.path !== 'SUMMARY');
-    // Determine review event based on severity
-    const hasErrors = comments.some(c => c.severity === 'error');
-    const event = hasErrors ? 'REQUEST_CHANGES' : 'COMMENT';
-    // Build inline review comments only (summary goes in edited /review comment)
-    const reviewComments = inlineComments
-        .filter(c => c.line > 0 && c.path)
-        .map(c => ({
-        path: c.path,
-        line: c.line,
-        body: c.body,
-    }));
-    if (reviewComments.length === 0) {
-        core.info('No inline comments to post');
-        return;
-    }
-    try {
-        await octokit.rest.pulls.createReview({
-            owner,
-            repo,
-            pull_number: prNumber,
-            commit_id: commitSha,
-            event: event,
-            body: '',
-            comments: reviewComments,
-        });
-        core.info(`Posted ${reviewComments.length} inline comments (${event})`);
-    }
-    catch (error) {
-        core.warning(`Failed to post inline review: ${error}`);
-    }
-}
-
-
-/***/ }),
-
-/***/ 9407:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
-const context_1 = __nccwpck_require__(788);
-const prompt_1 = __nccwpck_require__(705);
-const reviewer_1 = __nccwpck_require__(532);
-const github_1 = __nccwpck_require__(9248);
-async function editTriggerComment(body) {
-    const commentId = github.context.payload.comment?.id;
-    if (!commentId)
-        return;
-    const token = process.env.GITHUB_TOKEN || '';
-    const octokit = github.getOctokit(token);
-    const { owner, repo } = github.context.repo;
-    await octokit.rest.issues.updateComment({
-        owner,
-        repo,
-        comment_id: commentId,
-        body,
-    });
-}
-async function run() {
-    try {
-        const apiKey = core.getInput('anthropic_api_key', { required: true });
-        const model = core.getInput('model') || 'claude-sonnet-4-6';
-        const extraContext = core.getInput('extra_context') || '';
-        // Edit the /review comment to show progress
-        await editTriggerComment('🤖 **Reviewing PR...** ⏳');
-        core.info('Fetching PR context...');
-        const prContext = await (0, context_1.getPRContext)();
-        if (prContext.changedFiles.length === 0) {
-            await editTriggerComment('🤖 **No files to review.**');
-            core.info('No files to review');
-            return;
-        }
-        core.info(`Reviewing ${prContext.changedFiles.length} files...`);
-        const prompt = (0, prompt_1.buildReviewPrompt)(prContext, extraContext);
-        const comments = await (0, reviewer_1.getReview)(apiKey, model, prompt);
-        core.info(`Got ${comments.length} comments from Claude`);
-        // Get commit SHA - for issue_comment, fetch from PR API
-        let commitSha = github.context.payload.pull_request?.head.sha || '';
-        if (!commitSha) {
-            const token = process.env.GITHUB_TOKEN || '';
-            const octokit = github.getOctokit(token);
-            const { data: pr } = await octokit.rest.pulls.get({
-                owner: prContext.owner,
-                repo: prContext.repo,
-                pull_number: prContext.prNumber,
-            });
-            commitSha = pr.head.sha;
-        }
-        await (0, github_1.postReview)(prContext.owner, prContext.repo, prContext.prNumber, comments, commitSha);
-        // Set outputs
-        const errorCount = comments.filter(c => c.severity === 'error').length;
-        const warningCount = comments.filter(c => c.severity === 'warning').length;
-        core.setOutput('error_count', errorCount);
-        core.setOutput('warning_count', warningCount);
-        core.setOutput('comment_count', comments.length);
-        // Edit the /review comment to show full summary
-        const summary = comments.find(c => c.path === 'SUMMARY');
-        const summaryBody = summary
-            ? summary.body.replace(/^.*?(ERROR|WARNING|INFO):\s*/i, '')
-            : '';
-        const header = errorCount > 0
-            ? `🤖 **Review complete** — ${errorCount} error(s), ${warningCount} warning(s)`
-            : `🤖 **Review complete** — ${warningCount} warning(s), no errors ✅`;
-        await editTriggerComment(`${header}\n\n${summaryBody}`);
-        if (errorCount > 0) {
-            core.warning(`Review found ${errorCount} error(s) and ${warningCount} warning(s)`);
-        }
-        else {
-            core.info(`Review complete: ${warningCount} warning(s), no errors`);
-        }
-    }
-    catch (error) {
-        const msg = error instanceof Error ? error.message : 'An unexpected error occurred';
-        await editTriggerComment(`🤖 **Review failed** — ${msg}`).catch(() => { });
-        core.setFailed(msg);
-    }
-}
-run();
-
-
-/***/ }),
-
-/***/ 705:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.buildReviewPrompt = buildReviewPrompt;
-function buildReviewPrompt(context, extraContext) {
-    const memoriesSection = context.serenaMemories.length > 0
-        ? `\n## Domain Memories\n${context.serenaMemories.join('\n\n')}`
-        : '';
-    const agenticSection = context.agenticMaterial
-        ? `\n## Specs & Plan\n${context.agenticMaterial}`
-        : '';
-    const filesSection = context.changedFiles.map(f => {
-        return `### ${f.filename} (${f.status})
-\`\`\`diff
-${f.patch}
-\`\`\``;
-    }).join('\n\n');
-    const extraSection = extraContext
-        ? `\n## Additional Rules\n${extraContext}`
-        : '';
-    return `You are a senior code reviewer for a Go gRPC microservice team.
-
-## Rules
-- Be concise and direct. One sentence per finding.
-- Only report errors, warnings, and a short checklist. No info-level comments.
-- Do NOT explain what the code does. Only flag what's wrong.
-- Do NOT comment on test files, style, formatting, or things that are correct.
-- Do NOT flag missing total_pages or total_data in pagination responses — this is intentionally omitted for scalability.
-
-## Project Conventions
-${context.claudeMd || 'No CLAUDE.md found — use general Go best practices.'}
-${memoriesSection}
-${agenticSection}
-${extraSection}
-
-## Critical Checks
-1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList ONLY if they are returned as gRPC errors (via "return err"). Errors that are only used as string messages for CSV/bulk upload responses (e.g. written to CSV error columns) do NOT need ErrList mapping. Check how the error is actually used before flagging.
-2. **Feature flags**: Behavior changes MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example).
-3. **Tracer spans**: Public service/repository methods must have tracer.StartSpanWithContext.
-4. **Error handling**: Errors from external services should be logged, not silently swallowed.
-5. **Commit format**: [WF-xxxx] prefix.
-
-## Review Patterns (learned from senior engineer reviews)
-These are real patterns flagged by senior reviewers on this codebase. Apply them:
-
-### gRPC handler layer
-- Handler MUST return "status.Error(code, err.Error())" not just "err" — returning nil error means gRPC considers it success even if there was a failure.
-- Tracer span key-value map should include the request payload (parsed to JSON string) for debugging in Datadog APM.
-
-### Repository layer
-- Use slave DB for read queries unless there is a specific reason to use master (e.g. read-after-write consistency). Rack data and other rarely-changed data should always use slave.
-- Use "GetContext()" for single-row queries, "SelectContext()" for multi-row.
-
-### Service layer
-- Publish messages to external systems (ERP, pubsub) AFTER db transaction commit, not before. If tx fails after publish, the message is already sent and cannot be rolled back.
-- Wrap context with "context.WithoutCancel()" for async operations (notifications, pubsub) to prevent cancellation from caller context.
-- For rollback in defer: check "err != nil" before rolling back, and use a separate error variable for the rollback error to avoid overwriting the original error.
-
-### Model/DAO layer
-- Nullable database fields should use "sql.Null***" types or pointer types (e.g. "*time.Time"), not zero values.
-- No protobuf imports allowed in model/dao layer — this layer must be clean from framework dependencies.
-- DTO layer (internal/dto/) is allowed to import protobuf.
-
-### Naming conventions
-- Function and struct names must match the domain terminology. If the domain is "Purchase Order", dont use "Supply Order" in names even if legacy table names differ. Team acknowledges table name discrepancy.
-- Rename misleading function names — e.g. "FindSOItemsBySOID" should be "FindPOItemsByPOID" if it operates on Purchase Orders.
-
-### Architecture
-- External/outbound services should be 1 layer only (no separate grpc_repository layer). Service calls gRPC client directly.
-- Remove unused interfaces and dead code — dont leave commented-out code or unused interface declarations.
-- Parameter type changes (e.g. non-pointer to pointer) must be checked for breaking existing callers.
-
-## Changed Files
-${filesSection}
-
-## Output Format
-Respond ONLY with a valid JSON array. No markdown, no explanation, no code blocks.
-
-Each item:
-{"path": "file/path.go", "line": 42, "severity": "error"|"warning", "body": "one-line finding"}
-
-Last item must be a summary:
-{"path": "SUMMARY", "line": 0, "severity": "info", "body": "### Critical\\n- 🔴 ...\\n\\n### Warnings\\n- 🟡 ...\\n\\n### Checklist\\n- ✅/❌ ErrList, Feature flag, Tracer, Tests"}
-
-Keep the summary under 20 lines. Only include findings that are actionable.`;
-}
-
-
-/***/ }),
-
-/***/ 532:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getReview = getReview;
-const sdk_1 = __importDefault(__nccwpck_require__(121));
-const core = __importStar(__nccwpck_require__(7484));
-const SEVERITY_EMOJI = {
-    error: '🔴',
-    warning: '🟡',
-    info: '✅',
-};
-async function getReview(apiKey, model, prompt) {
-    const client = new sdk_1.default({ apiKey });
-    core.info(`Calling Claude (${model})...`);
-    const response = await client.messages.create({
-        model,
-        max_tokens: 8192,
-        messages: [
-            {
-                role: 'user',
-                content: prompt,
-            },
-        ],
-    });
-    const content = response.content[0];
-    if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude');
-    }
-    const text = content.text.trim();
-    core.info(`Claude response length: ${text.length} chars, stop_reason: ${response.stop_reason}`);
-    // Extract JSON from response (handle possible markdown code blocks)
-    let jsonStr = text;
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-        jsonStr = jsonMatch[1].trim();
-    }
-    try {
-        const comments = JSON.parse(jsonStr);
-        return comments.map(c => ({
-            ...c,
-            body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
-        }));
-    }
-    catch (parseError) {
-        // If JSON is truncated/invalid, post the raw response as a single comment
-        core.warning(`Failed to parse Claude response as JSON: ${parseError}`);
-        return [{
-                path: 'SUMMARY',
-                line: 0,
-                severity: 'info',
-                body: text,
-            }];
-    }
-}
-
-
-/***/ }),
-
 /***/ 2613:
 /***/ ((module) => {
 
@@ -30031,6 +29444,596 @@ module.exports = require("worker_threads");
 
 "use strict";
 module.exports = require("zlib");
+
+/***/ }),
+
+/***/ 5905:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getPRContext = getPRContext;
+const github = __importStar(__nccwpck_require__(3228));
+const core = __importStar(__nccwpck_require__(7484));
+const path_1 = __importDefault(__nccwpck_require__(6928));
+const fs_1 = __importDefault(__nccwpck_require__(9896));
+async function getPRContext() {
+    const token = process.env.GITHUB_TOKEN || '';
+    const octokit = github.getOctokit(token);
+    const context = github.context;
+    const owner = context.repo.owner;
+    const repo = context.repo.repo;
+    // Support both pull_request and issue_comment triggers
+    const prNumber = context.payload.pull_request?.number || context.payload.issue?.number;
+    if (!prNumber) {
+        throw new Error('This action can only be run on pull_request or issue_comment events');
+    }
+    // Get PR diff
+    const { data: diff } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNumber,
+        mediaType: { format: 'diff' },
+    });
+    // Get changed files with content
+    const { data: files } = await octokit.rest.pulls.listFiles({
+        owner,
+        repo,
+        pull_number: prNumber,
+    });
+    const maxFiles = parseInt(core.getInput('max_files') || '20');
+    const ignorePathsInput = core.getInput('ignore_paths');
+    const ignorePaths = ignorePathsInput ? ignorePathsInput.split(',').map(p => p.trim()) : [];
+    const changedFiles = [];
+    // Always skip test files by default
+    const defaultIgnore = ['_test\\.go$', '_mock_test\\.go$'];
+    const allIgnore = [...defaultIgnore, ...ignorePaths];
+    for (const file of files.slice(0, maxFiles)) {
+        if (shouldIgnore(file.filename, allIgnore))
+            continue;
+        let content = '';
+        try {
+            const { data } = await octokit.rest.repos.getContent({
+                owner,
+                repo,
+                path: file.filename,
+                ref: context.payload.pull_request?.head.sha,
+            });
+            if ('content' in data && data.content) {
+                content = Buffer.from(data.content, 'base64').toString('utf-8');
+            }
+        }
+        catch {
+            // File might be deleted
+        }
+        changedFiles.push({
+            filename: file.filename,
+            status: file.status,
+            patch: file.patch || '',
+            content,
+        });
+    }
+    // Read CLAUDE.md from repo
+    const claudeMd = readFileIfExists('CLAUDE.md');
+    // Read Serena memories for affected domains
+    const serenaMemories = readSerenaMemories(changedFiles);
+    // Read agenticmaterial if WF ticket is referenced
+    const agenticMaterial = readAgenticMaterial(context.payload.pull_request?.title || '');
+    return {
+        owner,
+        repo,
+        prNumber,
+        diff: diff,
+        changedFiles,
+        claudeMd,
+        serenaMemories,
+        agenticMaterial,
+    };
+}
+function shouldIgnore(filename, patterns) {
+    return patterns.some(pattern => {
+        const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+        return regex.test(filename);
+    });
+}
+function readFileIfExists(filePath) {
+    const workspace = process.env.GITHUB_WORKSPACE || '.';
+    const fullPath = path_1.default.join(workspace, filePath);
+    try {
+        return fs_1.default.readFileSync(fullPath, 'utf-8');
+    }
+    catch {
+        return '';
+    }
+}
+function readSerenaMemories(changedFiles) {
+    const workspace = process.env.GITHUB_WORKSPACE || '.';
+    const memoriesDir = path_1.default.join(workspace, '.serena', 'memories');
+    const memories = [];
+    if (!fs_1.default.existsSync(memoriesDir))
+        return memories;
+    // Extract domains from changed file paths
+    const domains = new Set();
+    for (const file of changedFiles) {
+        // e.g., internal/service/packageid/get_list.go → packageid
+        const parts = file.filename.split('/');
+        const domainIdx = parts.findIndex(p => ['service', 'repository', 'api'].includes(p));
+        if (domainIdx >= 0 && parts[domainIdx + 1]) {
+            domains.add(parts[domainIdx + 1]);
+        }
+    }
+    // Read memory files matching affected domains
+    for (const domain of domains) {
+        const memoryFiles = fs_1.default.readdirSync(memoriesDir).filter(f => f.startsWith(domain));
+        for (const file of memoryFiles) {
+            try {
+                const content = fs_1.default.readFileSync(path_1.default.join(memoriesDir, file), 'utf-8');
+                memories.push(`# Memory: ${file}\n${content}`);
+            }
+            catch {
+                // skip
+            }
+        }
+    }
+    return memories;
+}
+function readAgenticMaterial(prTitle) {
+    const workspace = process.env.GITHUB_WORKSPACE || '.';
+    const match = prTitle.match(/WF-(\d+)/);
+    if (!match)
+        return '';
+    const wfDir = path_1.default.join(workspace, 'agenticmaterial', `WF-${match[1]}`);
+    if (!fs_1.default.existsSync(wfDir))
+        return '';
+    let material = '';
+    for (const file of ['specs.md', 'plan.md']) {
+        const filePath = path_1.default.join(wfDir, file);
+        try {
+            material += `\n# ${file}\n${fs_1.default.readFileSync(filePath, 'utf-8')}`;
+        }
+        catch {
+            // skip
+        }
+    }
+    return material;
+}
+//# sourceMappingURL=context.js.map
+
+/***/ }),
+
+/***/ 523:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.postReview = postReview;
+const github = __importStar(__nccwpck_require__(3228));
+const core = __importStar(__nccwpck_require__(7484));
+async function postReview(owner, repo, prNumber, comments, commitSha) {
+    const token = process.env.GITHUB_TOKEN || '';
+    const octokit = github.getOctokit(token);
+    // Separate summary from inline comments
+    const summary = comments.find(c => c.path === 'SUMMARY');
+    const inlineComments = comments.filter(c => c.path !== 'SUMMARY');
+    // Determine review event based on severity
+    const hasErrors = comments.some(c => c.severity === 'error');
+    const event = hasErrors ? 'REQUEST_CHANGES' : 'COMMENT';
+    // Build inline review comments only (summary goes in edited /review comment)
+    const reviewComments = inlineComments
+        .filter(c => c.line > 0 && c.path)
+        .map(c => ({
+        path: c.path,
+        line: c.line,
+        body: c.body,
+    }));
+    if (reviewComments.length === 0) {
+        core.info('No inline comments to post');
+        return;
+    }
+    try {
+        await octokit.rest.pulls.createReview({
+            owner,
+            repo,
+            pull_number: prNumber,
+            commit_id: commitSha,
+            event: event,
+            body: '',
+            comments: reviewComments,
+        });
+        core.info(`Posted ${reviewComments.length} inline comments (${event})`);
+    }
+    catch (error) {
+        core.warning(`Failed to post inline review: ${error}`);
+    }
+}
+//# sourceMappingURL=github.js.map
+
+/***/ }),
+
+/***/ 1542:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+const context_1 = __nccwpck_require__(5905);
+const prompt_1 = __nccwpck_require__(974);
+const reviewer_1 = __nccwpck_require__(4187);
+const github_1 = __nccwpck_require__(523);
+async function editTriggerComment(body) {
+    const commentId = github.context.payload.comment?.id;
+    if (!commentId)
+        return;
+    const token = process.env.GITHUB_TOKEN || '';
+    const octokit = github.getOctokit(token);
+    const { owner, repo } = github.context.repo;
+    await octokit.rest.issues.updateComment({
+        owner,
+        repo,
+        comment_id: commentId,
+        body,
+    });
+}
+async function run() {
+    try {
+        const apiKey = core.getInput('anthropic_api_key', { required: true });
+        const model = core.getInput('model') || 'claude-sonnet-4-6';
+        const extraContext = core.getInput('extra_context') || '';
+        // Edit the /review comment to show progress
+        await editTriggerComment('🤖 **Reviewing PR...** ⏳');
+        core.info('Fetching PR context...');
+        const prContext = await (0, context_1.getPRContext)();
+        if (prContext.changedFiles.length === 0) {
+            await editTriggerComment('🤖 **No files to review.**');
+            core.info('No files to review');
+            return;
+        }
+        core.info(`Reviewing ${prContext.changedFiles.length} files...`);
+        const prompt = (0, prompt_1.buildReviewPrompt)(prContext, extraContext);
+        const comments = await (0, reviewer_1.getReview)(apiKey, model, prompt);
+        core.info(`Got ${comments.length} comments from Claude`);
+        // Get commit SHA - for issue_comment, fetch from PR API
+        let commitSha = github.context.payload.pull_request?.head.sha || '';
+        if (!commitSha) {
+            const token = process.env.GITHUB_TOKEN || '';
+            const octokit = github.getOctokit(token);
+            const { data: pr } = await octokit.rest.pulls.get({
+                owner: prContext.owner,
+                repo: prContext.repo,
+                pull_number: prContext.prNumber,
+            });
+            commitSha = pr.head.sha;
+        }
+        await (0, github_1.postReview)(prContext.owner, prContext.repo, prContext.prNumber, comments, commitSha);
+        // Set outputs
+        const errorCount = comments.filter(c => c.severity === 'error').length;
+        const warningCount = comments.filter(c => c.severity === 'warning').length;
+        core.setOutput('error_count', errorCount);
+        core.setOutput('warning_count', warningCount);
+        core.setOutput('comment_count', comments.length);
+        // Edit the /review comment to show full summary
+        const summary = comments.find(c => c.path === 'SUMMARY');
+        const summaryBody = summary
+            ? summary.body.replace(/^.*?(ERROR|WARNING|INFO):\s*/i, '')
+            : '';
+        const header = errorCount > 0
+            ? `🤖 **Review complete** — ${errorCount} error(s), ${warningCount} warning(s)`
+            : `🤖 **Review complete** — ${warningCount} warning(s), no errors ✅`;
+        await editTriggerComment(`${header}\n\n${summaryBody}`);
+        if (errorCount > 0) {
+            core.warning(`Review found ${errorCount} error(s) and ${warningCount} warning(s)`);
+        }
+        else {
+            core.info(`Review complete: ${warningCount} warning(s), no errors`);
+        }
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'An unexpected error occurred';
+        await editTriggerComment(`🤖 **Review failed** — ${msg}`).catch(() => { });
+        core.setFailed(msg);
+    }
+}
+run();
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 974:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildReviewPrompt = buildReviewPrompt;
+function buildReviewPrompt(context, extraContext) {
+    const memoriesSection = context.serenaMemories.length > 0
+        ? `\n## Domain Memories\n${context.serenaMemories.join('\n\n')}`
+        : '';
+    const agenticSection = context.agenticMaterial
+        ? `\n## Specs & Plan\n${context.agenticMaterial}`
+        : '';
+    const filesSection = context.changedFiles.map(f => {
+        return `### ${f.filename} (${f.status})
+\`\`\`diff
+${f.patch}
+\`\`\``;
+    }).join('\n\n');
+    const extraSection = extraContext
+        ? `\n## Additional Rules\n${extraContext}`
+        : '';
+    return `You are a senior code reviewer for a Go gRPC microservice team.
+
+## Rules
+- Be concise and direct. One sentence per finding.
+- Only report errors, warnings, and a short checklist. No info-level comments.
+- Do NOT explain what the code does. Only flag what's wrong.
+- Do NOT comment on test files, style, formatting, or things that are correct.
+- Do NOT flag missing total_pages or total_data in pagination responses — this is intentionally omitted for scalability.
+
+## Project Conventions
+${context.claudeMd || 'No CLAUDE.md found — use general Go best practices.'}
+${memoriesSection}
+${agenticSection}
+${extraSection}
+
+## Critical Checks
+1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList ONLY if they are returned as gRPC errors (via "return err"). Errors that are only used as string messages for CSV/bulk upload responses (e.g. written to CSV error columns) do NOT need ErrList mapping. Check how the error is actually used before flagging.
+2. **Feature flags**: Behavior changes MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example).
+3. **Tracer spans**: Public service/repository methods must have tracer.StartSpanWithContext.
+4. **Error handling**: Errors from external services should be logged, not silently swallowed.
+5. **Commit format**: [WF-xxxx] prefix.
+
+## Review Patterns (learned from senior engineer reviews)
+These are real patterns flagged by senior reviewers on this codebase. Apply them:
+
+### gRPC handler layer
+- Handler MUST return "status.Error(code, err.Error())" not just "err" — returning nil error means gRPC considers it success even if there was a failure.
+- Tracer span key-value map should include the request payload (parsed to JSON string) for debugging in Datadog APM.
+
+### Repository layer
+- Use slave DB for read queries unless there is a specific reason to use master (e.g. read-after-write consistency). Rack data and other rarely-changed data should always use slave.
+- Use "GetContext()" for single-row queries, "SelectContext()" for multi-row.
+
+### Service layer
+- Publish messages to external systems (ERP, pubsub) AFTER db transaction commit, not before. If tx fails after publish, the message is already sent and cannot be rolled back.
+- Wrap context with "context.WithoutCancel()" for async operations (notifications, pubsub) to prevent cancellation from caller context.
+- For rollback in defer: check "err != nil" before rolling back, and use a separate error variable for the rollback error to avoid overwriting the original error.
+
+### Model/DAO layer
+- Nullable database fields should use "sql.Null***" types or pointer types (e.g. "*time.Time"), not zero values.
+- No protobuf imports allowed in model/dao layer — this layer must be clean from framework dependencies.
+- DTO layer (internal/dto/) is allowed to import protobuf.
+
+### Naming conventions
+- Function and struct names must match the domain terminology. If the domain is "Purchase Order", dont use "Supply Order" in names even if legacy table names differ. Team acknowledges table name discrepancy.
+- Rename misleading function names — e.g. "FindSOItemsBySOID" should be "FindPOItemsByPOID" if it operates on Purchase Orders.
+
+### Architecture
+- External/outbound services should be 1 layer only (no separate grpc_repository layer). Service calls gRPC client directly.
+- Remove unused interfaces and dead code — dont leave commented-out code or unused interface declarations.
+- Parameter type changes (e.g. non-pointer to pointer) must be checked for breaking existing callers.
+
+## Changed Files
+${filesSection}
+
+## Output Format
+Respond ONLY with a valid JSON array. No markdown, no explanation, no code blocks.
+
+Each item:
+{"path": "file/path.go", "line": 42, "severity": "error"|"warning", "body": "one-line finding"}
+
+**IMPORTANT — Inline comment rule:**
+Only post inline comments on lines that appear in the diff (lines prefixed with \`+\` or \`-\` in the patch). If you find an issue in code that is NOT part of the diff (unchanged code in the file), put it in the SUMMARY instead with the file path and line number mentioned in the body. Do NOT post inline comments on unchanged lines — GitHub shows confusing context when comments don't match the visible diff hunk.
+
+Last item must be a summary:
+{"path": "SUMMARY", "line": 0, "severity": "info", "body": "### Critical\\n- 🔴 ...\\n\\n### Warnings\\n- 🟡 ...\\n\\n### Out-of-diff findings\\n- path/to/file.go:42 — ...\\n\\n### Checklist\\n- ✅/❌ ErrList, Feature flag, Tracer, Tests"}
+
+Keep the summary under 20 lines. Only include findings that are actionable.`;
+}
+//# sourceMappingURL=prompt.js.map
+
+/***/ }),
+
+/***/ 4187:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getReview = getReview;
+const sdk_1 = __importDefault(__nccwpck_require__(121));
+const core = __importStar(__nccwpck_require__(7484));
+const SEVERITY_EMOJI = {
+    error: '🔴',
+    warning: '🟡',
+    info: '✅',
+};
+async function getReview(apiKey, model, prompt) {
+    const client = new sdk_1.default({ apiKey });
+    core.info(`Calling Claude (${model})...`);
+    const response = await client.messages.create({
+        model,
+        max_tokens: 8192,
+        messages: [
+            {
+                role: 'user',
+                content: prompt,
+            },
+        ],
+    });
+    const content = response.content[0];
+    if (content.type !== 'text') {
+        throw new Error('Unexpected response type from Claude');
+    }
+    const text = content.text.trim();
+    core.info(`Claude response length: ${text.length} chars, stop_reason: ${response.stop_reason}`);
+    // Extract JSON from response (handle possible markdown code blocks)
+    let jsonStr = text;
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+    }
+    try {
+        const comments = JSON.parse(jsonStr);
+        return comments.map(c => ({
+            ...c,
+            body: `${SEVERITY_EMOJI[c.severity] || ''} **${c.severity.toUpperCase()}**: ${c.body}`,
+        }));
+    }
+    catch (parseError) {
+        // If JSON is truncated/invalid, post the raw response as a single comment
+        core.warning(`Failed to parse Claude response as JSON: ${parseError}`);
+        return [{
+                path: 'SUMMARY',
+                line: 0,
+                severity: 'info',
+                body: text,
+            }];
+    }
+}
+//# sourceMappingURL=reviewer.js.map
 
 /***/ }),
 
@@ -37965,8 +37968,9 @@ module.exports = parseParams
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(9407);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(1542);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()
 ;
+//# sourceMappingURL=index.js.map
