@@ -25,6 +25,8 @@ ${f.patch}
 - Do NOT explain what the code does. Only flag what's wrong.
 - Do NOT comment on test files, style, formatting, or things that are correct.
 - Do NOT flag missing total_pages or total_data in pagination responses — this is intentionally omitted for scalability.
+- Do NOT flag hardcoded MaxPageSize / batch size constants (e.g. constants.MaxPageSize = 50) as truncation bugs — these are used for BATCHING loops inside the service (fetch N at a time, loop until all fetched), not as a final result limit. Check if the code loops/batches before flagging.
+- Do NOT flag "seq + 1" or similar increment patterns on PO/SO/sequence numbers as off-by-one without strong evidence — these patterns often match existing WMS/legacy behavior and are intentional. Only flag if you can clearly show the increment causes a real conflict.
 
 ## Project Conventions
 ${context.claudeMd || 'No CLAUDE.md found — use general Go best practices.'}
@@ -34,7 +36,7 @@ ${extraSection}
 
 ## Critical Checks
 1. **ErrList mapping**: New errors in constants/error.go MUST be added to the relevant ErrList ONLY if they are returned as gRPC errors (via "return err"). Errors that are only used as string messages for CSV/bulk upload responses (e.g. written to CSV error columns) do NOT need ErrList mapping. Check how the error is actually used before flagging.
-2. **Feature flags**: Behavior changes MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example).
+2. **Feature flags**: Behavior changes to EXISTING functionality MUST be gated behind config-based feature flag (ffRelease*/ffEnable* in FeatureFlagConfig + types.go + config.yaml.example). DO NOT flag feature flags as missing for entirely NEW features/endpoints (e.g. a brand new service method, new RPC, new CRUD flow) — only existing behavior changes need flags. New features are typically gated at the gRPC/routing layer, not the service layer.
 3. **Tracer spans**: Public service/repository methods must have tracer.StartSpanWithContext.
 4. **Error handling**: Errors from external services should be logged, not silently swallowed.
 5. **Commit format**: [WF-xxxx] prefix.
